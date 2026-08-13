@@ -35,10 +35,19 @@ def load_corpora(root: pathlib.Path, overrides: Optional[List[str]] = None) -> C
             cp.read(cand)
         except configparser.Error:
             continue
-        section = cp["linlink"] if "linlink" in cp else cp["tool.linlink"] if "tool.linlink" in cp else None
+        section = cp["corpora"] if "corpora" in cp else cp["linlink"] if "linlink" in cp else cp["tool.linlink"] if "tool.linlink" in cp else None
         if section is not None:
+            # A relative path resolves against the config file's directory,
+            # not the caller's cwd — so `genesis = "./"` always means this repo
+            # regardless of where the command runs. TOML-quoted values come
+            # through configparser with the quotes kept; strip them.
+            base = cand.parent
             for key, val in section.items():
-                corpora[key] = pathlib.Path(val).expanduser()
+                val = val.strip().strip('"').strip("'")
+                p = pathlib.Path(val).expanduser()
+                if not p.is_absolute():
+                    p = (base / p).resolve()
+                corpora[key] = p
     # CLI overrides
     if overrides:
         for spec in overrides:
