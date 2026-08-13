@@ -42,11 +42,20 @@ Two cases, one mechanism: the hidden uuid is the identity of every target.
 
 ```bash
 linlink index          # build the corpus index (uuid -> corpus:path)
-linlink mint           # mint uuids into frontmatter where missing
+linlink mint           # report uuids to mint (dry-run)
+linlink mint --write   # mint uuids into frontmatter where missing
 linlink check          # verify every reference resolves (exit 0/2/3)
-linlink repair         # rewrite stale paths by uuid (self-heal)
-linlink robustify      # anchor plain references with hidden uuids
+linlink repair         # report stale paths to heal (dry-run)
+linlink repair --write # rewrite stale paths by uuid (self-heal)
+linlink robustify      # report references to anchor (dry-run)
+linlink robustify --write  # anchor plain references with hidden uuids
 ```
+
+**Safe by default.** `mint`, `repair`, and `robustify` are dry-runs
+unless `--write` is given — they report what they would change and
+mutate nothing. A dry run never writes, including minting a target uuid
+as a side effect of anchoring (it reports "need mint first" instead).
+`check` and `index` are read-only always.
 
 Configuration via a `linlink.toml` (or `[tool.linlink]` in pyproject):
 

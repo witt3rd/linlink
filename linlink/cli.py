@@ -65,7 +65,8 @@ def cmd_index(args, corpora: CorporaMap) -> int:
 
 
 def cmd_mint(args, corpora: CorporaMap) -> int:
-    """Mint uuids into frontmatter where missing (no-write with --dry-run)."""
+    """Mint uuids into frontmatter where missing. Safe-by-default: dry-run
+    unless --write. A dry run never writes anything."""
     roots = _scan_roots(args.paths, corpora)
     minted = 0
     for root in roots:
@@ -74,10 +75,14 @@ def cmd_mint(args, corpora: CorporaMap) -> int:
                    for part in md.parts):
                 continue
             if frontmatter.read_uuid(md) is None:
-                uid = frontmatter.ensure_uuid(md)
+                if args.write:
+                    uid = frontmatter.ensure_uuid(md)
+                    print(f"  mint {uid} -> {md}")
+                else:
+                    print(f"  would mint -> {md}  (use --write)")
                 minted += 1
-                print(f"  mint {uid} -> {md}")
-    print(f"minted: {minted}")
+    verb = "minted" if args.write else "would mint (dry-run)"
+    print(f"{verb}: {minted}")
     return 0
 
 
@@ -119,6 +124,8 @@ def cmd_check(args, corpora: CorporaMap) -> int:
 
 
 def cmd_repair(args, corpora: CorporaMap) -> int:
+    """Rewrite stale locators by uuid. Safe-by-default: dry-run unless
+    --write. A dry run reports what would heal, writes nothing."""
     roots = _scan_roots(args.paths, corpora)
     idx = index_mod.build_index(corpora)
     repaired = 0
@@ -130,11 +137,14 @@ def cmd_repair(args, corpora: CorporaMap) -> int:
             text = md.read_text(encoding="utf-8")
             new_text, repairs = engine.repair_text(text, md, corpora, idx)
             if new_text != text:
-                md.write_text(new_text, encoding="utf-8")
+                if args.write:
+                    md.write_text(new_text, encoding="utf-8")
                 for r in repairs:
-                    print(f"  [repaired] {md}: {r.label} — {r.detail}")
+                    tag = "repaired" if args.write else "would repair"
+                    print(f"  [{tag}] {md}: {r.label} — {r.detail}")
                     repaired += 1
-    print(f"repaired: {repaired}")
+    verb = "repaired" if args.write else "would repair (dry-run)"
+    print(f"{verb}: {repaired}")
     return 0
 
 
@@ -143,9 +153,12 @@ def cmd_robustify(args, corpora: CorporaMap) -> int:
 
     Anchors both in-tree markdown links and lin: citations. For a link,
     the uuid is the target's; for a lin: citation, it is the cited file's.
+    Safe-by-default: dry-run unless --write. A dry run never writes — it
+    reports what would be anchored and which targets need minting first.
     """
     roots = _scan_roots(args.paths, corpora)
     anchored = 0
+    need_mint = 0
     for root in roots:
         for md in sorted(root.rglob("*.md")):
             if any(part.startswith(".") or part in ("node_modules", "target")
@@ -156,21 +169,31 @@ def cmd_robustify(args, corpora: CorporaMap) -> int:
             for ref in grammar.find_references(text):
                 if ref.uuid is not None:
                     continue  # already anchored
-                uid = _anchor_uuid_for(ref, md, corpora)
+                uid = _anchor_uuid_for(ref, md, corpora, write=args.write)
                 if uid is None:
+                    need_mint += 1  # target has no uuid yet (or unresolvable)
                     continue
                 new_ref = ref.full + grammar.anchor_comment(uid)
                 changed = changed.replace(ref.full, new_ref, 1)
                 anchored += 1
             if changed != text:
-                md.write_text(changed, encoding="utf-8")
-                print(f"  [anchored] {md}")
-    print(f"anchored: {anchored}")
+                if args.write:
+                    md.write_text(changed, encoding="utf-8")
+                tag = "anchored" if args.write else "would anchor"
+                print(f"  [{tag}] {md}")
+    verb = "anchored" if args.write else "would anchor (dry-run)"
+    print(f"{verb}: {anchored}"
+          + (f" | need mint first: {need_mint}" if not args.write else ""))
     return 0
 
 
-def _anchor_uuid_for(ref, md: pathlib.Path, corpora: CorporaMap):
-    """Get the uuid to anchor a reference with — target's, minting if absent."""
+def _anchor_uuid_for(ref, md: pathlib.Path, corpora: CorporaMap, write: bool):
+    """Get the uuid to anchor a reference with — target's, minting if absent.
+
+    write=False (dry-run) reads the existing uuid but NEVER mints — minting
+    is a write. Returns None if the target has no uuid yet, so the dry-run
+    can report 'need mint first' instead of silently writing.
+    """
     if ref.kind == "lin":
         if ref.corpus is None:
             return None
@@ -182,7 +205,9 @@ def _anchor_uuid_for(ref, md: pathlib.Path, corpora: CorporaMap):
         target = (md.parent / ref.target_path).resolve()
     if not target.exists() and not target.is_dir():
         return None
-    return frontmatter.ensure_uuid(target)
+    if write:
+        return frontmatter.ensure_uuid(target)
+    return frontmatter.read_uuid(target)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -195,17 +220,21 @@ def build_parser() -> argparse.ArgumentParser:
     pi = sub.add_parser("index", help="build the corpus index")
     pi.add_argument("--limit", type=int, default=20)
 
-    pm = sub.add_parser("mint", help="mint uuids where missing")
+    pm = sub.add_parser("mint", help="mint uuids where missing (dry-run unless --write)")
 
     pc = sub.add_parser("check", help="verify references resolve")
     pc.add_argument("--json", action="store_true")
 
-    pr = sub.add_parser("repair", help="rewrite stale locators by uuid")
+    pr = sub.add_parser("repair", help="rewrite stale locators by uuid (dry-run unless --write)")
 
-    pb = sub.add_parser("robustify", help="anchor plain citations with uuids")
+    pb = sub.add_parser("robustify", help="anchor plain citations with uuids (dry-run unless --write)")
 
-    for subp in (pm, pc, pr, pb):
+    # the three mutating commands are safe-by-default: dry-run unless --write
+    for subp in (pm, pr, pb):
+        subp.add_argument("--write", action="store_true",
+                          help="apply the changes (default is a dry run)")
         subp.add_argument("paths", nargs="*", help="dirs to scan (default: all corpora)")
+    pc.add_argument("paths", nargs="*", help="dirs to scan (default: all corpora)")
     return p
 
 
