@@ -37,6 +37,8 @@ def scan_corpus(name: str, root: pathlib.Path) -> List[IndexEntry]:
     if not root.is_dir():
         return entries
     for md in sorted(root.rglob("*.md")):
+        if not md.is_file():
+            continue  # a directory named *.md is not a note — don't crash
         if any(part.startswith(".") or part == "node_modules" or part == "target"
                for part in md.parts):
             continue  # skip hidden/vendored/build dirs
