@@ -20,6 +20,7 @@ Verdicts, in the darnlink-compatible exit-code family:
 from __future__ import annotations
 
 import pathlib
+import re
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -43,7 +44,8 @@ class Finding:
             if self.reference.pin:
                 base += f"@{self.reference.pin}"
             return base
-        return f"[..]({self.reference.target_path})"
+        frag = f"#{self.reference.fragment}" if self.reference.fragment else ""
+        return f"[..]({self.reference.target_path}{frag})"
 
 
 def check_text(text: str, file_abs: pathlib.Path, corpora: index_mod.CorporaMap,
@@ -63,6 +65,25 @@ def _check_one(ref: Reference, file_abs: pathlib.Path,
     return _check_lin(ref, corpora, index, mint)
 
 
+def _slug(s: str) -> str:
+    """GitHub-style anchor slug: lowercase, drop non-word chars, spaces -> -."""
+    return re.sub(r"[^\w\s-]", "", s.lower()).strip().replace(" ", "-")
+
+
+def _heading_slugs(path: pathlib.Path) -> set:
+    """All heading anchors of a markdown file (GitHub-style slugs)."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return set()
+    slugs = set()
+    for ln in lines:
+        m = re.match(r"^#{1,6}\s+(.+)$", ln)
+        if m:
+            slugs.add(_slug(m.group(1)))
+    return slugs
+
+
 def _check_link(ref: Reference, file_abs: pathlib.Path) -> Finding:
     # In-tree link: resolve against the file's own directory.
     target = (file_abs.parent / ref.target_path).resolve()
@@ -73,6 +94,11 @@ def _check_link(ref: Reference, file_abs: pathlib.Path) -> Finding:
             if actual and actual != ref.uuid:
                 return Finding(str(file_abs), ref, "BROKEN",
                                f"uuid mismatch: locator resolves to {actual}, comment says {ref.uuid}")
+        # anchor support: a #frag must match a heading slug in the target
+        if ref.fragment and target.is_file():
+            if ref.fragment not in _heading_slugs(target):
+                return Finding(str(file_abs), ref, "BROKEN",
+                               f"anchor #{ref.fragment} not found in {ref.target_path}")
         return Finding(str(file_abs), ref, "OK")
     if ref.uuid:
         # locator stale but has a uuid — the index (or a sibling scan) could
@@ -154,5 +180,6 @@ def _heal_link(ref: Reference, file_abs: pathlib.Path) -> Optional[str]:
     for sibling in file_abs.parent.rglob("*.md"):
         if frontmatter.read_uuid(sibling) == uid:
             rel = sibling.relative_to(file_abs.parent).as_posix()
-            return f"[..]({rel}){grammar.anchor_comment(uid)}"
+            frag = f"#{ref.fragment}" if ref.fragment else ""
+            return f"[..]({rel}{frag}){grammar.anchor_comment(uid)}"
     return None
