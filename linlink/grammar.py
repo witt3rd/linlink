@@ -30,7 +30,7 @@ UUID_COMMENT_RE = re.compile(r"<!--\s*uuid:\s*([0-9a-fA-F-]+)\s*-->")
 # In-tree markdown link: [text](path) with optional adjacent uuid comment.
 # Captures full link + trailing uuid comment so we can rewrite path.
 LINK_RE = re.compile(
-    r"\[[^\]]*\]\(([^)\s]+)\)(\s*<!--\s*uuid:\s*([0-9a-fA-F-]+)\s*-->)?"
+    r"\[[^\]]*\]\(([^)#\s]+)(?:#([^\s)]+))?\)(\s*<!--\s*uuid:\s*([0-9a-fA-F-]+)\s*-->)?"
 )
 
 # Cross-corpus lin: citation. Path is greedy up to #, @, whitespace, or a
@@ -79,8 +79,8 @@ def _matches(text: str):
         out.append(Reference(
             kind="link", corpus=None,
             target_path=tgt,
-            fragment=None, pin=None,
-            uuid=m.group(3),
+            fragment=m.group(2), pin=None,
+            uuid=m.group(4),
             full=m.group(0), start=m.start(),
         ))
     for m in LIN_RE.finditer(scan_text):
